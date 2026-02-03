@@ -118,7 +118,7 @@
                 this.type = type;
                 this.x = canvas.width + 50;
                 this.y = Math.random() * canvas.height;
-                this.size = type === 'h2' ? 200 : Math.random() * 60 + 30;
+                this.size = type === 'h2' ? 100 : Math.random() * 60 + 30;
                 this.speed = (type === 'h2' ? 4 : 5) + (frame / 1500);
             }
             update() {
@@ -231,4 +231,5 @@
         loop();
     </script>
 </body>
+
 </html>
