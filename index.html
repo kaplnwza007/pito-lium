@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Oil Origin: Mobile & PC Edition</title>
+    <style>
+        /* ป้องกันการเลื่อนหน้าจอบนมือถือ */
+        html, body { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            overflow: hidden; touch-action: none; 
+            background: #1a0f00; font-family: 'Segoe UI', sans-serif;
+        }
+        canvas { display: block; }
+        #ui { 
+            position: absolute; top: 10px; left: 10px; color: white; 
+            background: rgba(0,0,0,0.7); padding: 12px; border-radius: 12px;
+            border: 2px solid #5d3a1a; pointer-events: none; width: 160px;
+            font-size: 13px; z-index: 10;
+        }
+        .stat { margin: 4px 0; }
+        #evolution-bar { width: 100%; height: 8px; background: #333; border-radius: 4px; overflow: hidden; }
+        #evolution-progress { width: 0%; height: 100%; background: #ffcc00; transition: 0.3s; }
+        .danger { color: #ff4444; font-weight: bold; animation: blink 0.5s infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        #start-hint {
+            position: absolute; bottom: 20px; width: 100%; text-align: center;
+            color: rgba(255,255,255,0.5); font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div style="color: #ffcc00; font-weight: bold; margin-bottom: 5px;">OIL ORIGIN</div>
+        <div class="stat">Stage: <span id="stage-name">Sediment</span></div>
+        <div class="stat">Stability: <span id="hp-val">100</span>%</div>
+        <div class="stat">Temp: <span id="temp-val">30</span> °C</div>
+        <div id="evolution-bar"><div id="evolution-progress"></div></div>
+    </div>
+
+    <div id="start-hint">ลากนิ้วหรือขยับเมาส์เพื่อควบคุม</div>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        let gameActive = true;
+        let frame = 0;
+        let evolutionPoints = 0;
+        const stages = [
+            { name: "Sediment", color: "#5d6d7e", radius: 12, goal: 100 },
+            { name: "Kerogen", color: "#7e5109", radius: 18, goal: 300 },
+            { name: "Crude Oil", color: "#ffcc00", radius: 14, goal: 600 },
+            { name: "Natural Gas", color: "#ffffff", radius: 9, goal: 1000 }
+        ];
+        let currentIdx = 0;
+
+        let player = {
+            x: 80, // ขยับมาทางซ้ายหน่อยเพื่อให้มือถือเล่นง่าย
+            y: canvas.height / 2,
+            targetY: canvas.height / 2,
+            ...stages[0],
+            hp: 100
+        };
+
+        let objects = [];
+
+        // --- Audio Logic ---
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let audioCtx;
+        function initAudio() {
+            if (!audioCtx) audioCtx = new AudioContext();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playSound(freq, type, duration) {
+            if(!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        }
+
+        // --- Input Handling (PC & Mobile) ---
+        function moveHandler(e) {
+            e.preventDefault();
+            initAudio(); // ปลดล็อกเสียงเมื่อมีการสัมผัสครั้งแรก
+            let clientY;
+            if (e.touches) {
+                clientY = e.touches[0].clientY;
+            } else {
+                clientY = e.clientY;
+            }
+            player.targetY = clientY;
+        }
+
+        window.addEventListener('mousemove', moveHandler);
+        window.addEventListener('touchmove', moveHandler, { passive: false });
+        window.addEventListener('touchstart', moveHandler, { passive: false });
+
+        class GameObject {
+            constructor(type) {
+                this.type = type;
+                this.x = canvas.width + 50;
+                this.y = Math.random() * canvas.height;
+                this.size = type === 'h2' ? 200 : Math.random() * 60 + 30;
+                this.speed = (type === 'h2' ? 4 : 5) + (frame / 1500);
+            }
+            update() {
+                this.x -= this.speed;
+                ctx.beginPath();
+                if(this.type === 'h2') {
+                    ctx.arc(this.x, this.y, this.size/2, 0, Math.PI*2);
+                    ctx.fillStyle = '#00f2ff';
+                    ctx.shadowBlur = 10; ctx.shadowColor = '#00f2ff';
+                } else {
+                    ctx.rect(this.x, this.y, this.size, this.size);
+                    ctx.fillStyle = '#3d2b1f';
+                }
+                ctx.fill();
+                ctx.closePath();
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        function loop() {
+            if (!gameActive) return;
+
+            // Background & Environment
+            let depth = Math.floor((player.y / canvas.height) * 5000);
+            let temp = Math.floor(30 + (depth / 100));
+            
+            let grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            grad.addColorStop(0, "#4d2600");
+            grad.addColorStop(0.8, "#1a0f00");
+            grad.addColorStop(1, "#881100");
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Player Physics
+            player.y += (player.targetY - player.y) * 0.15;
+            
+            // Draw Player
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI*2);
+            ctx.fillStyle = player.color;
+            ctx.shadowBlur = 15; ctx.shadowColor = player.color;
+            ctx.fill();
+            ctx.closePath();
+            ctx.shadowBlur = 0;
+
+            // Spawn & Update Objects
+            if (frame % 50 === 0) objects.push(new GameObject('rock'));
+            if (frame % 90 === 0) objects.push(new GameObject('h2'));
+
+            objects.forEach((obj, i) => {
+                obj.update();
+                
+                let dx = player.x - (obj.type === 'h2' ? obj.x : obj.x + obj.size/2);
+                let dy = player.y - (obj.type === 'h2' ? obj.y : obj.y + obj.size/2);
+                let dist = Math.sqrt(dx*dx + dy*dy);
+
+                if (dist < player.radius + obj.size/2) {
+                    if (obj.type === 'h2') {
+                        evolutionPoints += 30;
+                        player.hp = Math.min(100, player.hp + 10);
+                        playSound(500, 'sine', 0.1);
+                        objects.splice(i, 1);
+                    } else {
+                        player.hp -= 1.5;
+                        playSound(150, 'square', 0.1);
+                        obj.x -= 20; // แรงกระแทก
+                    }
+                }
+            });
+
+            // Heat Damage
+            if (temp > 170) player.hp -= 0.4;
+
+            // Evolution
+            let goal = stages[currentIdx].goal;
+            document.getElementById('evolution-progress').style.width = (evolutionPoints / goal * 100) + "%";
+            
+            if (evolutionPoints >= goal && currentIdx < stages.length - 1) {
+                currentIdx++;
+                player.color = stages[currentIdx].color;
+                player.radius = stages[currentIdx].radius;
+                document.getElementById('stage-name').innerText = stages[currentIdx].name;
+                evolutionPoints = 0;
+                playSound(800, 'triangle', 0.3);
+            }
+
+            // UI & Win/Loss
+            document.getElementById('hp-val').innerText = Math.max(0, Math.floor(player.hp));
+            document.getElementById('temp-val').innerText = temp;
+            if(temp > 170) document.getElementById('temp-val').className = 'danger';
+            else document.getElementById('temp-val').className = '';
+
+            if (player.hp <= 0) {
+                gameActive = false;
+                alert("Game Over! คุณกาก");
+                location.reload();
+            }
+
+            if (currentIdx === 3 && evolutionPoints >= 500) {
+                gameActive = false;
+                alert("ชัยชนะ! คุณกลายเป็นก๊าซธรรมชาติที่ถูกกักเก็บใน Reservoir Rock สำเร็จ!");
+                location.reload();
+            }
+
+            objects = objects.filter(o => o.x > -100);
+            frame++;
+            requestAnimationFrame(loop);
+        }
+
+        loop();
+    </script>
+</body>
+</html>
